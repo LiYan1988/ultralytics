@@ -184,7 +184,7 @@ class v8DetectionLoss:
             out = torch.zeros(batch_size, 0, ne - 1, device=self.device)
         else:
             i = targets[:, 0]  # image index
-            _, counts = i.unique(return_counts=True)
+            _, counts = i.cpu().unique(return_counts=True)
             counts = counts.to(dtype=torch.int32)
             out = torch.zeros(batch_size, counts.max(), ne - 1, device=self.device)
             for j in range(batch_size):
@@ -560,7 +560,7 @@ class v8PoseLoss(v8DetectionLoss):
         batch_size = len(masks)
 
         # Find the maximum number of keypoints in a single image
-        max_kpts = torch.unique(batch_idx, return_counts=True)[1].max()
+        max_kpts = torch.unique(batch_idx.cpu(), return_counts=True)[1].max()
 
         # Create a tensor to hold batched keypoints
         batched_keypoints = torch.zeros(
