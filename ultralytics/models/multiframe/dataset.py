@@ -4,10 +4,12 @@
 import contextlib
 import json
 from collections import defaultdict
+from copy import deepcopy
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 import os
+import math
 
 import cv2
 import numpy as np
@@ -45,6 +47,8 @@ from ultralytics.data.utils import (
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import IMG_FORMATS
 from ultralytics.utils.torch_utils import de_parallel
+
+from .augment import MultiFrameCompose
 
 
 class MultiFrameDataset(YOLODataset):
@@ -187,14 +191,13 @@ class MultiFrameDataset(YOLODataset):
             nf += nf_f
             ne += ne_f
             nc += nc_f
-            # label_meta.loc[idx, 'label_file'] = label_file
-            # label_meta.loc[idx, 'verified'] = True if lb_file is not None else False
-            # label_meta.loc[idx, 'msg'] = msg
-            # label_meta.loc[idx, 'im_files'] = im_files
-            # label_meta.loc[idx, 'video_name'] = video_name
+            # Add label information to the output dictionary
+            # Note: ultralytics.data.base.BaseDataset.__init__ requires 'im_file' as string,
+            #   so we have to add another field 'im_files' containing all frames, and use 'im_file' for the last frame.
             x['labels'].append(
                 {
-                    'im_file': im_files,
+                    'im_file': im_files[-1], # The last frame in the label
+                    'im_files': im_files, # all frames in the label
                     'video_name': video_name,
                     'shape': shape, # assumes all images are of same shape
                     'cls': lb[:, 0:1],
@@ -304,8 +307,72 @@ class MultiFrameDataset(YOLODataset):
             msg = f"{prefix}WARNING ⚠️ {lb_file}: ignoring corrupt image/label: {e}"
             return [None, None, None, None, nm, nf, ne, nc, msg]
 
+    @staticmethod
+    def _load_image(img_file, imgsz, rect_mode=True):
+        """
+        Load image in img_file. If rect_mode is True resize to maintain aspect ratio,
+        otherwise stretch image to square imgsz.
+        Returns (im, original hw, resized hw).
+        """
+        im = cv2.imread(str(img_file))
+        h0, w0 = im.shape[:2] # original hw
+        if rect_mode:
+            r = imgsz / max(h0, w0)  # ratio
+            if r != 1:  # if sizes are not equal
+                w, h = (min(math.ceil(w0 * r), imgsz), min(math.ceil(h0 * r), imgsz))
+                im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+        elif not (h0 == w0 == imgsz):  # resize by stretching image to square imgsz
+            im = cv2.resize(im, (imgsz, imgsz), interpolation=cv2.INTER_LINEAR)
+        return im, (h0, w0), im.shape[:2]
 
+    def load_image(self, i, rect_mode=True):
+        """
+        Load image according to labels' im_files field.
+        """
+        label = self.labels[i]
+        img_files = label['im_files']
+        imgs, ori_shape, resized_shape = [None] * self.n_frames, [None] * self.n_frames, [None] * self.n_frames
+        for i, f in enumerate(img_files):
+            imgs[i], ori_shape[i], resized_shape[i] = self._load_image(f, self.imgsz, rect_mode)
+        return imgs, ori_shape[0], resized_shape[0]
 
+    def get_image_and_label(self, index):
+        """Get and return label information from the dataset."""
+        label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
+        label.pop("shape", None)  # shape is for rect, remove it
+        label["imgs"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
+        label["img"] = np.concatenate(label["imgs"], axis=-1)
+        label["ratio_pad"] = (
+            label["resized_shape"][0] / label["ori_shape"][0],
+            label["resized_shape"][1] / label["ori_shape"][1],
+        )  # for evaluation
+        if self.rect:
+            label["rect_shape"] = self.batch_shapes[self.batch[index]]
+        return self.update_labels_info(label)
+
+    def build_transforms(self, hyp=None):
+        """
+        Build and appends transforms to the list for multi-frame dataset.
+
+        Consider the following transformations at the moment:
+        - LetterBox
+        - Format
+        """
+        transforms = MultiFrameCompose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        transforms.append(
+            Format(
+                bbox_format="xywh",
+                normalize=True,
+                return_mask=self.use_segments,
+                return_keypoint=self.use_keypoints,
+                return_obb=self.use_obb,
+                batch_idx=True,
+                mask_ratio=hyp.mask_ratio,
+                mask_overlap=hyp.overlap_mask,
+                bgr=hyp.bgr if self.augment else 0.0,  # only affect training.
+            )
+        )
+        return transforms
 
     # def build_transforms(self, hyp=None):
     #     """Modify transforms for multi-frame"""
