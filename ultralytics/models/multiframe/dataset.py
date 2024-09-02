@@ -49,7 +49,7 @@ from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import IMG_FORMATS
 from ultralytics.utils.torch_utils import de_parallel
 
-from .augment import MultiFrameCompose
+from .augment import MultiFrameCompose, MultiFrameLetterBox
 
 
 class MultiFrameDataset(YOLODataset):
@@ -121,7 +121,7 @@ class MultiFrameDataset(YOLODataset):
         if (self.fraction < 1) and (round(len(labels) * self.fraction) > 1):
             labels = labels[: round(len(labels) * self.fraction)]
         else:
-            labels = [labels[0]]
+            labels = labels[:2] # train and val may have problem when batch size equals 1
         return labels
 
     def cache_labels(self, path=Path("./labels.cache")):
@@ -363,7 +363,7 @@ class MultiFrameDataset(YOLODataset):
         - LetterBox
         - Format
         """
-        transforms = MultiFrameCompose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        transforms = MultiFrameCompose([MultiFrameLetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
         transforms.append(
             Format(
                 bbox_format="xywh",
