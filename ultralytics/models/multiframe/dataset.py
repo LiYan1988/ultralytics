@@ -10,6 +10,7 @@ from multiprocessing.pool import ThreadPool
 from pathlib import Path
 import os
 import math
+import glob
 
 import cv2
 import numpy as np
@@ -117,8 +118,10 @@ class MultiFrameDataset(YOLODataset):
                 lb["segments"] = []
         if len_cls == 0:
             LOGGER.warning(f"WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}")
-        if self.fraction < 1:
+        if (self.fraction < 1) and (round(len(labels) * self.fraction) > 1):
             labels = labels[: round(len(labels) * self.fraction)]
+        else:
+            labels = [labels[0]]
         return labels
 
     def cache_labels(self, path=Path("./labels.cache")):
@@ -376,30 +379,29 @@ class MultiFrameDataset(YOLODataset):
         )
         return transforms
 
-    # def build_transforms(self, hyp=None):
-    #     """Modify transforms for multi-frame"""
-    #     pass
-
-    # def get_image_and_label(self, index):
-    #     """Get label information from dataset, no image here?"""
-    #     pass
-
-    # We don't need to worry about dataloader and dataset length.
-    # But in general these lengths are calculated from the number of labels
-    # instead of images. This is because image and labels are not one to one mapped.
-    # Label is what we should use to calculate lengths.
-    # ultralytics.data.build.build_dataloader
-
-    # Stack of loading batch during training:
-    # ultralytics.data.build.InfiniteDataLoader.__iter__, ultralytics/data/build.py:47
-    # __iter__, std.py:1181
-    # ultralytics/engine/trainer.py:364
-    # ultralytics.engine.trainer.BaseTrainer._do_train, line 206
-    # ultralytics/engine/model.py:813, Model.train
-    # <module>, nb-002-multi-frame-1.py:42
-
-    # Methods to override
-    # 1. ultralytics.data.base.BaseDataset.get_image_and_label
-    # 2. ultralytics.data.base.BaseDataset.load_image 
-    # 3. And where each label is associated with images?
-    # 4. ultralytics.data.dataset.YOLODataset.update_labels_info
+    def get_img_files(self, img_path):
+        """Read image files."""
+        try:
+            f = []  # image files
+            for p in img_path if isinstance(img_path, list) else [img_path]:
+                p = Path(p)  # os-agnostic
+                if p.is_dir():  # dir
+                    f += glob.glob(str(p / "**" / "*.*"), recursive=True)
+                    # F = list(p.rglob('*.*'))  # pathlib
+                elif p.is_file():  # file
+                    with open(p) as t:
+                        t = t.read().strip().splitlines()
+                        parent = str(p.parent) + os.sep
+                        f += [x.replace("./", parent) if x.startswith("./") else x for x in t]  # local to global path
+                        # F += [p.parent / x.lstrip(os.sep) for x in t]  # local to global path (pathlib)
+                else:
+                    raise FileNotFoundError(f"{self.prefix}{p} does not exist")
+            im_files = sorted(x.replace("/", os.sep) for x in f if x.split(".")[-1].lower() in IMG_FORMATS)
+            # self.img_files = sorted([x for x in f if x.suffix[1:].lower() in IMG_FORMATS])  # pathlib
+            assert im_files, f"{self.prefix}No images found in {img_path}. {FORMATS_HELP_MSG}"
+        except Exception as e:
+            raise FileNotFoundError(f"{self.prefix}Error loading data from {img_path}\n{HELP_URL}") from e
+        # No need to apply fraction here as we will do it in self.get_labels
+        # if self.fraction < 1:
+        #     im_files = im_files[: round(len(im_files) * self.fraction)]  # retain a fraction of the dataset
+        return im_files
