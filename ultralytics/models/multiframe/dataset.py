@@ -117,6 +117,8 @@ class MultiFrameDataset(YOLODataset):
                 lb["segments"] = []
         if len_cls == 0:
             LOGGER.warning(f"WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}")
+        if self.fraction < 1:
+            labels = labels[: round(len(labels) * self.fraction)]
         return labels
 
     def cache_labels(self, path=Path("./labels.cache")):
@@ -308,7 +310,7 @@ class MultiFrameDataset(YOLODataset):
             return [None, None, None, None, nm, nf, ne, nc, msg]
 
     @staticmethod
-    def _load_image(img_file, imgsz, rect_mode=True):
+    def load_single_image(img_file, imgsz, rect_mode=True):
         """
         Load image in img_file. If rect_mode is True resize to maintain aspect ratio,
         otherwise stretch image to square imgsz.
@@ -333,7 +335,7 @@ class MultiFrameDataset(YOLODataset):
         img_files = label['im_files']
         imgs, ori_shape, resized_shape = [None] * self.n_frames, [None] * self.n_frames, [None] * self.n_frames
         for i, f in enumerate(img_files):
-            imgs[i], ori_shape[i], resized_shape[i] = self._load_image(f, self.imgsz, rect_mode)
+            imgs[i], ori_shape[i], resized_shape[i] = self.load_single_image(f, self.imgsz, rect_mode)
         return imgs, ori_shape[0], resized_shape[0]
 
     def get_image_and_label(self, index):
