@@ -1,9 +1,10 @@
 from ultralytics.engine.model import Model
+from ultralytics.nn.tasks import PoseModel
 
 from .train import MultiFrameTrainer
 
 
-class MultiFrameModel(Model):
+class MultiFrame(Model):
 
     def __init__(self, model='yolov8n-pose.pt'):
         super().__init__(model=model, task='pose', verbose=True)
@@ -12,6 +13,7 @@ class MultiFrameModel(Model):
     def task_map(self) -> dict:
         return {
             "pose": {
+                "model": PoseModel,
                 "trainer": MultiFrameTrainer,
             }
         }
