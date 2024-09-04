@@ -49,7 +49,7 @@ from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import IMG_FORMATS
 from ultralytics.utils.torch_utils import de_parallel
 
-from .augment import MultiFrameCompose, MultiFrameLetterBox
+from .augment import MultiFrameCompose, MultiFrameLetterBox, multiframe_v8_transforms
 
 
 class MultiFrameDataset(YOLODataset):
@@ -337,14 +337,15 @@ class MultiFrameDataset(YOLODataset):
         label = self.labels[i]
         img_files = label['im_files']
         imgs, ori_shape, resized_shape = [None] * self.n_frames, [None] * self.n_frames, [None] * self.n_frames
-        for i, f in enumerate(img_files):
-            imgs[i], ori_shape[i], resized_shape[i] = self.load_single_image(f, self.imgsz, rect_mode)
+        for j, f in enumerate(img_files):
+            imgs[j], ori_shape[j], resized_shape[j] = self.load_single_image(f, self.imgsz, rect_mode)
         return imgs, ori_shape[0], resized_shape[0]
 
     def get_image_and_label(self, index):
         """Get and return label information from the dataset."""
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop("shape", None)  # shape is for rect, remove it
+        # label["img"] contains each individual frame, and label["imgs"] contain the concatenated multiple frames
         label["imgs"], label["ori_shape"], label["resized_shape"] = self.load_image(index)
         label["img"] = np.concatenate(label["imgs"], axis=-1)
         label["ratio_pad"] = (
@@ -363,7 +364,12 @@ class MultiFrameDataset(YOLODataset):
         - LetterBox
         - Format
         """
-        transforms = MultiFrameCompose([MultiFrameLetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+        if self.augment:
+            hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
+            transforms = multiframe_v8_transforms(self, self.imgsz, hyp)
+        else:
+            transforms = MultiFrameCompose([MultiFrameLetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
         transforms.append(
             Format(
                 bbox_format="xywh",
