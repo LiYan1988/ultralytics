@@ -2,6 +2,7 @@ from ultralytics.engine.model import Model
 from ultralytics.nn.tasks import PoseModel
 
 from .train import MultiFrameTrainer
+from .val import MultiFrameValidator
 
 
 class MultiFrame(Model):
@@ -15,5 +16,6 @@ class MultiFrame(Model):
             "pose": {
                 "model": PoseModel,
                 "trainer": MultiFrameTrainer,
+                "validator": MultiFrameValidator,
             }
         }

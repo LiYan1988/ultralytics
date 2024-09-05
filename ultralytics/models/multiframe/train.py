@@ -6,8 +6,11 @@ from ultralytics.models.yolo.pose import PoseTrainer
 from ultralytics.utils import DEFAULT_CFG, LOGGER, colorstr
 from ultralytics.utils.torch_utils import de_parallel
 from ultralytics.nn.tasks import PoseModel
+from ultralytics.utils.plotting import plot_images
 
 from .dataset import MultiFrameDataset
+from .val import MultiFrameValidator
+from .utils import plot_samples_multiframe
 
 
 class MultiFrameTrainer(PoseTrainer):
@@ -38,7 +41,7 @@ class MultiFrameTrainer(PoseTrainer):
             imgsz=self.args.imgsz,
             batch_size=batch,
             augment=mode == "train",
-            hyp=self.args,  # TODO: probably add a get_hyps_from_cfg function
+            hyp=self.args,
             rect=self.args.rect or False,  # rectangular batches
             cache=self.args.cache or None,
             single_cls=self.args.single_cls or False,
@@ -49,4 +52,18 @@ class MultiFrameTrainer(PoseTrainer):
             classes=self.args.classes,
             data=self.data,
             fraction=self.args.fraction if mode == "train" else 1.0,
+        )
+
+    def plot_training_samples(self, batch, ni):
+        """Plot a batch of training samples with annotated class labels, bounding boxes, and keypoints."""
+        plot_samples_multiframe(batch, ni, self.save_dir, self.on_plot)
+
+    def plot_training_labels(self):
+        super().plot_training_labels()
+
+    def get_validator(self):
+        """Return an instance of the MultiFrameValidator for validation."""
+        self.loss_names = "box_loss", "pose_loss", "kobj_loss", "cls_loss", "dfl_loss"
+        return MultiFrameValidator(
+            self.test_loader, save_dir=self.save_dir, args=copy(self.args), _callbacks=self.callbacks
         )
