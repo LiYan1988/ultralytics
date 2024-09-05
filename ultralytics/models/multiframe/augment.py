@@ -138,22 +138,22 @@ class MultiFrameMosaic(Mosaic):
         """
         First perform Mosaic transformation on data['img'], then update data['imgs'] one by one.
         """
-        data = super().__call__(labels=data)
-        return update_imgs_from_img(data)
+        data_ = super().__call__(labels=data)
+        return update_imgs_from_img(data, data_)
 
 
 class MultiFrameRandomPerspective(RandomPerspective):
 
     def __call__(self, data):
-        data = super().__call__(labels=data)
-        return update_imgs_from_img(data)
+        data_ = super().__call__(labels=data)
+        return update_imgs_from_img(data, data_)
 
 
 class MultiFrameMixup(MixUp):
 
     def __call__(self, data):
-        data = super().__call__(labels=data)
-        return update_imgs_from_img(data)
+        data_ = super().__call__(labels=data)
+        return update_imgs_from_img(data, data_)
 
 
 class MultiFrameRandomHSV(RandomHSV):
@@ -256,17 +256,20 @@ class MultiFrameRandomFlip(RandomFlip):
     #     return data
 
     def __call__(self, data):
-        data = super().__call__(labels=data)
-        return update_imgs_from_img(data)
+        data_ = super().__call__(labels=data)
+        return update_imgs_from_img(data, data_)
 
 
-def update_imgs_from_img(data):
+def update_imgs_from_img(data_orig, data_aug):
     """
-    Update individual frame from concatenated multi-frame image.
+    Updates individual frame from concatenated multi-frame image.
+    Also copies other properties from data_aug to data_orig.
     """
-    # assert len(data['imgs']) * 3 == data['imgs'].shape[-1]
+    data = data_orig | data_aug
     for i in range(len(data['imgs'])):
         data['imgs'][i] = data['img'][..., i * 3: (i + 1) * 3]
+    # Pop unwanted properties
+    data.pop('mix_labels', None)
     return data
 
 
