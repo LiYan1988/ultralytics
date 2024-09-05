@@ -48,6 +48,5 @@ class MultiFrameTrainer(PoseTrainer):
             task=self.args.task,
             classes=self.args.classes,
             data=self.data,
-            # fraction=self.args.fraction if mode == "train" else 1.0,
-            fraction=self.args.fraction, # apply fraction in val as well in development
+            fraction=self.args.fraction if mode == "train" else 1.0,
         )

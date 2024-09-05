@@ -121,7 +121,10 @@ class MultiFrameDataset(YOLODataset):
         if (self.fraction < 1) and (round(len(labels) * self.fraction) > 1):
             labels = labels[: round(len(labels) * self.fraction)]
         else:
-            labels = labels[:2] # train and val may have problem when batch size equals 1
+            # Only loads 2 labels if self.fraction == 1
+            # For quick check in development
+            # train and val may have problem when batch size equals 1, so at least 2 samples.
+            labels = labels[:2]
         return labels
 
     def cache_labels(self, path=Path("./labels.cache")):
