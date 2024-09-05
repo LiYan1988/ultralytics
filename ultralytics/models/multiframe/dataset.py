@@ -49,7 +49,7 @@ from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import IMG_FORMATS
 from ultralytics.utils.torch_utils import de_parallel
 
-from .augment import MultiFrameCompose, MultiFrameLetterBox, multiframe_v8_transforms
+from .augment import MultiFrameLetterBox, multiframe_v8_transforms
 
 
 class MultiFrameDataset(YOLODataset):
@@ -372,7 +372,7 @@ class MultiFrameDataset(YOLODataset):
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
             transforms = multiframe_v8_transforms(self, self.imgsz, hyp)
         else:
-            transforms = MultiFrameCompose([MultiFrameLetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+            transforms = Compose([MultiFrameLetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
         transforms.append(
             Format(
                 bbox_format="xywh",
