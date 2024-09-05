@@ -37,32 +37,6 @@ Apply augmentations to multi-frame data. There are two types of augmentations:
 """
 
 
-# Not necessary to use MultiFrameCompose, all multi-frame related tasks are handled inside transformations.
-class MultiFrameCompose(Compose):
-    """
-    A class for composing multi-frame image transformations.
-
-    Consider the following transformations:
-    - LetterBox
-    - Format
-    """
-    def __init__(self, transforms):
-        super().__init__(transforms)
-
-    def __call__(self, data):
-        for t in self.transforms:
-            data = t(data)
-            # TODO: refactor later
-            # if isinstance(t, Format):
-            #     # Update data['img'] with images in data['imgs']
-            #     # because we assume they are LetterBox transformed
-            #     data['img'] = np.concatenate(data['imgs'], axis=-1)
-            #     data = t(data)
-            # else:
-            #     data = t(data)
-        return data
-
-
 class MultiFrameLetterBox(LetterBox):
     """
     Overrides __call__ method of LetterBox to return ratio_pad when labels=None in input argument.
