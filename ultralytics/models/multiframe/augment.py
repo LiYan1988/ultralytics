@@ -9,7 +9,8 @@ from ultralytics.data.augment import (
     Format,
     Mosaic,
     RandomPerspective,
-    MixUp
+    MixUp,
+    Albumentations,
 )
 from ultralytics.utils import LOGGER
 
@@ -193,7 +194,7 @@ def multiframe_v8_transforms(dataset, imgsz, hyp, stretch=False):
         [
             pre_transform,
             MultiFrameMixup(dataset, pre_transform=pre_transform, p=hyp.mixup),
-            # Albumentations(p=1.0),
+            # Albumentations(p=1.0), # Albumentations augment is disabled at the moment
             # RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
             # RandomFlip(direction="vertical", p=hyp.flipud),
             # RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
