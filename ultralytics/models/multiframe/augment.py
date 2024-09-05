@@ -1,3 +1,4 @@
+import random
 from copy import deepcopy
 import cv2
 
@@ -11,10 +12,32 @@ from ultralytics.data.augment import (
     RandomPerspective,
     MixUp,
     Albumentations,
+    RandomHSV,
+    RandomFlip
 )
 from ultralytics.utils import LOGGER
 
 
+"""
+Apply augmentations to multi-frame data. There are two types of augmentations:
+1. Channel-agnostic transformation: 
+    - we first apply in data['img'] for all frames, 
+    - then update each frame in data['imgs']
+    - transformations in this type are:
+        - Mosaic
+        - RandomPerspective
+        - Mixup
+        - RandomFlip
+2. Channel dependent transformation, where input data should be a 3-channel image
+    - we first apply the same transformation on each frame in data['img']
+    - then concatenate all frames into data['imgs'] 
+    - transformations in this type are:
+        - RandomHSV
+        - LetterBox
+"""
+
+
+# Not necessary to use MultiFrameCompose, all multi-frame related tasks are handled inside transformations.
 class MultiFrameCompose(Compose):
     """
     A class for composing multi-frame image transformations.
@@ -115,21 +138,125 @@ class MultiFrameMosaic(Mosaic):
         """
         First perform Mosaic transformation on data['img'], then update data['imgs'] one by one.
         """
-        super().__call__(labels=data)
+        data = super().__call__(labels=data)
         return update_imgs_from_img(data)
 
 
 class MultiFrameRandomPerspective(RandomPerspective):
 
     def __call__(self, data):
-        super().__call__(labels=data)
+        data = super().__call__(labels=data)
         return update_imgs_from_img(data)
 
 
 class MultiFrameMixup(MixUp):
 
     def __call__(self, data):
-        super().__call__(labels=data)
+        data = super().__call__(labels=data)
+        return update_imgs_from_img(data)
+
+
+class MultiFrameRandomHSV(RandomHSV):
+    """
+    Apply RandomHSV on multi-frame image.
+
+    Initializes random gains before transformation to make sure
+        the same parameters are applied to all images in the multi-frame series.
+    """
+
+    def _random_hsv(self, dtype):
+        """Generate random gains and create look up tables."""
+        r = np.random.uniform(-1, 1, 3) * [self.hgain, self.sgain, self.vgain] + 1  # random gains
+        x = np.arange(0, 256, dtype=r.dtype)
+        lut_hue = ((x * r[0]) % 180).astype(dtype)
+        lut_sat = np.clip(x * r[1], 0, 255).astype(dtype)
+        lut_val = np.clip(x * r[2], 0, 255).astype(dtype)
+        return lut_hue, lut_sat, lut_val
+
+    def _apply(self, img, lut_hue, lut_sat, lut_val):
+        """Apply HSV transform on a single frame image."""
+        hue, sat, val = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
+        im_hsv = cv2.merge(
+            (
+                cv2.LUT(hue, lut_hue),
+                cv2.LUT(sat, lut_sat),
+                cv2.LUT(val, lut_val)
+            )
+        )
+        # We do not manipulate on the original image but return a copy.
+        # Because in-place change may require a contiguous array.
+        return cv2.cvtColor(im_hsv, cv2.COLOR_HSV2BGR)
+
+    def __call__(self, data):
+        """
+        Applies the same HSV transform on each individual frame and concatenate frames.
+        """
+        lut_hue, lut_sat, lut_val = self._random_hsv(data['img'].dtype)
+        for i, img in enumerate(data['imgs']):
+            data['imgs'][i] = self._apply(img, lut_hue, lut_sat, lut_val)
+        data['img'] = np.concatenate(data['imgs'], axis=-1)
+        return data
+
+
+# This is not needed because RandomFlip is channel agnostic.
+# But still keep it here for future references in case we need to implement other multi-frame augmentations.
+class MultiFrameRandomFlip(RandomFlip):
+    """
+    Apply RandomFlip on multi-frame image.
+    """
+
+    def _prepare_transform(self, data):
+        """
+        Prepare random number and image shape for one sample, i.e., a series of multiple frames.
+        """
+        img = data['img']
+        instances = data.get('instances')
+        instances.convert_bbox(format='xywh')
+        h, w = img.shape[:2]
+        h = 1 if instances.normalized else h
+        w = 1 if instances.normalized else w
+        return instances, w, h
+
+    def _apply_on_image(self, img):
+        """Apply flip on a single image."""
+        if self.direction == "vertical":
+            img = np.flipud(img)
+        if self.direction == "horizontal":
+            img = np.fliplr(img)
+        return np.ascontiguousarray(img)
+
+    def _apply_on_instances(self, instances, w, h):
+        """Apply flip on ground truths."""
+        if self.direction == "vertical":
+            instances.flipud(h)
+        if self.direction == "horizontal":
+            instances.fliplr(w)
+            # For keypoints
+            if self.flip_idx is not None and instances.keypoints is not None:
+                instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
+        return instances
+
+    # Will not use this __call__ method
+    # def __call__(self, data):
+    #     # Generate a random number
+    #     r = random.random()
+    #     if r >= self.p:
+    #         # Directly return the original data
+    #         return data
+    #
+    #     instances, w, h = self._prepare_transform(data)
+    #     # Apply the same flip on all frames
+    #     for i, img in enumerate(data['imgs']):
+    #         data['imgs'][i] = self._apply_on_image(img)
+    #     data['img'] = np.ascontiguousarray(
+    #         np.concatenate(data['imgs'], axis=-1)
+    #     )
+    #     # Apply corresponding transformation on labels
+    #     data['instances'] = self._apply_on_instances(instances, w, h)
+    #     return data
+
+    def __call__(self, data):
+        data = super().__call__(labels=data)
         return update_imgs_from_img(data)
 
 
@@ -168,7 +295,7 @@ def multiframe_v8_transforms(dataset, imgsz, hyp, stretch=False):
         >>> transforms = v8_transforms(dataset, imgsz=640, hyp=hyp)
         >>> augmented_data = transforms(dataset[0])
     """
-    pre_transform = MultiFrameCompose(
+    pre_transform = Compose(
         [
             MultiFrameMosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
             MultiFrameRandomPerspective(
@@ -190,13 +317,13 @@ def multiframe_v8_transforms(dataset, imgsz, hyp, stretch=False):
         elif flip_idx and (len(flip_idx) != kpt_shape[0]):
             raise ValueError(f"data.yaml flip_idx={flip_idx} length must be equal to kpt_shape[0]={kpt_shape[0]}")
 
-    return MultiFrameCompose(
+    return Compose(
         [
             pre_transform,
             MultiFrameMixup(dataset, pre_transform=pre_transform, p=hyp.mixup),
             # Albumentations(p=1.0), # Albumentations augment is disabled at the moment
-            # RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
-            # RandomFlip(direction="vertical", p=hyp.flipud),
-            # RandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
+            MultiFrameRandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
+            MultiFrameRandomFlip(direction="vertical", p=hyp.flipud),
+            MultiFrameRandomFlip(direction="horizontal", p=hyp.fliplr, flip_idx=flip_idx),
         ]
     )  # transforms
