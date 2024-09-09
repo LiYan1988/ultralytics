@@ -19,12 +19,13 @@ class MultiFrameTrainer(PoseTrainer):
     pose detection in video using multiple consecutive frames.
     """
 
-    def __init__(self, n_frames=5, overrides=None, _callbacks=None):
+    def __init__(self, overrides=None, _callbacks=None):
         if overrides is None:
             overrides = {}
         super().__init__(overrides=overrides, _callbacks=_callbacks)
-        self.n_frames = n_frames
-        self.ch = n_frames * 3
+        # self.args.n_frames comes from /ultralytics/ultralytics/cfg/default.yaml
+        self.n_frames = self.args.n_frames
+        self.ch = self.n_frames * 3
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         model = PoseModel(cfg, ch=self.ch, nc=self.data["nc"], data_kpt_shape=self.data["kpt_shape"], verbose=verbose)

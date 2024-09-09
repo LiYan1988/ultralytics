@@ -67,7 +67,7 @@ class MultiFrameDataset(YOLODataset):
         (torch.utils.data.Dataset): A dataset for multi-frame keypoint detection.
     """
 
-    def __init__(self, *args, data, n_frames=5, file_sep='-', **kwargs):
+    def __init__(self, *args, data, n_frames, file_sep='-', **kwargs):
         """
         Initializes a dataset object for keypoint detection tasks.
         """
