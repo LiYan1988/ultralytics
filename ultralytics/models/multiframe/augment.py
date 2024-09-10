@@ -76,22 +76,38 @@ class MultiFrameLetterBox(LetterBox):
         )  # add border
         return img, left, top, ratio, dw, dh, new_shape
 
-    def __call__(self, data):
+    def __call__(self, data=None, images=None):
         """
-        First perform LetterBox on each individual frame in data['imgs'].
-        Then concatenate transformed frames into data['img'].
+        For multi-frame task, apply letterboxing to each image in a multi-frame series by resizing the image
+        while maintaining its aspect ratio and adding padding to fit the new shape. It also updates any
+        associated labels accordingly during training and validation.
+
+        To perform LetterBox for multi-frame images, we first transform each individual frame in data['imgs'] or images.
+        Then concatenate transformed frames into data['img'] or output the np.ndarray (if `images` is provided).
+
+        Args:
+            data (dict | None): A dictionary containing image data and associated labels during training and validation.
+                It can also be None during inference.
+            images (list | None): A list containing a multi-frame series of images. This argument is used
+                in inference.
         """
-        for i, img in enumerate(data['imgs']):
-            data['imgs'][i], left, top, ratio, dw, dh, new_shape = self._transform_single_image(img)
+        if images is None:
+            for i, img in enumerate(data['imgs']):
+                data['imgs'][i], left, top, ratio, dw, dh, new_shape = self._transform_single_image(img)
 
-        data["ratio_pad"] = (data["ratio_pad"], (left, top))  # for evaluation
+            data["ratio_pad"] = (data["ratio_pad"], (left, top))  # for evaluation
 
-        data = self._update_labels(data, ratio, dw, dh)
-        data["resized_shape"] = new_shape
+            data = self._update_labels(data, ratio, dw, dh)
+            data["resized_shape"] = new_shape
 
-        # Update final image by concatenate transformed images
-        data['img'] = np.concatenate(data['imgs'], axis=-1)
-        return data
+            # Update final image by concatenate transformed images
+            data['img'] = np.concatenate(data['imgs'], axis=-1)
+            return data
+        else:
+            ims = [None] * len(images)
+            for i, img in enumerate(images):
+                ims[i], *_ = self._transform_single_image(img)
+            return np.concatenate(ims, axis=-1)
 
 
 class MultiFrameMosaic(Mosaic):

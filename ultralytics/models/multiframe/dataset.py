@@ -11,6 +11,7 @@ from pathlib import Path
 import os
 import math
 import glob
+import copy
 
 import cv2
 import numpy as np
@@ -23,7 +24,6 @@ from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr
 from ultralytics.utils.ops import resample_segments
 from ultralytics.utils.torch_utils import TORCHVISION_0_18
 from ultralytics.data.dataset import DATASET_CACHE_VERSION
-
 from ultralytics.data.augment import (
     Compose,
     Format,
@@ -47,7 +47,8 @@ from ultralytics.data.utils import (
 )
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import IMG_FORMATS
-from ultralytics.utils.torch_utils import de_parallel
+from ultralytics.data.loaders import LoadImagesAndVideos, SourceTypes
+from ultralytics.engine.results import Results
 
 from .augment import MultiFrameLetterBox, multiframe_v8_transforms
 
@@ -414,3 +415,140 @@ class MultiFrameDataset(YOLODataset):
         # if self.fraction < 1:
         #     im_files = im_files[: round(len(im_files) * self.fraction)]  # retain a fraction of the dataset
         return im_files
+
+
+class MultiFrameVideoLoader(LoadImagesAndVideos):
+    """
+    Load videos for predict mode in the Multi-Frame model.
+    """
+
+    def __init__(self, path, n_frames, batch=1):
+        # Initialize self.n_frames before initiliazing the parent class
+        # because we need to use self.n_frames in self._new_video method.
+        self.n_frames = n_frames
+        super().__init__(path, batch=batch)
+        self.frame_buffer = []
+        self.source_type = SourceTypes(stream=False, screenshot=False, from_img=False, tensor=False)
+
+    def _update_frame_buffer(self, im0):
+        self.frame_buffer.append(im0)
+        while len(self.frame_buffer) > self.n_frames:
+            self.frame_buffer.pop(0)
+
+    def _retrieve_multiframe_images(self, path):
+        """Retrieve a series of frames from video."""
+        if not self.cap or not self.cap.isOpened():
+            self._new_video(path)
+
+        while len(self.frame_buffer) < self.n_frames:
+            success = self.cap.grab()
+            if success:
+                success, im0 = self.cap.retrieve()
+                # No need to doublecheck image retrieval success.
+                # Just directly append the newest frame to the end of the frame.
+                self.frame_buffer.append(im0)
+            else:
+                # If retrieval is not successful, we are at the end of the video.
+                break
+
+        # It is not possible for success == True and len(self.frame_buffer) < self.n_frames
+        # So if success == True, we always have len(self.frame_buffer) >= self.n_frames
+        if success:
+            # Ensure n_frames images in the buffer
+            while len(self.frame_buffer) > self.n_frames:
+                self.frame_buffer.pop(0)
+            # If retrieval of frame is successful and the frame_buffer is full, output multi-frame series.
+            # TODO: self.frame and self.frames should be modified to reflect the number of multi-frame series.
+            self.frame += 1
+            multi_frame_img = copy.deepcopy(self.frame_buffer)
+            # Remove the oldest frame from the buffer
+            self.frame_buffer.pop(0)
+            info = f"video {self.count + 1}/{self.nf} (frame {self.frame}/{self.frames}) {path}: "
+        else:
+            # We are at the end of the video
+            # NOTE: when clipping from a video, the original number of frames from cv2.CAP_PROP_FRAME_COUNT
+            # is not accurate.
+            # It maybe represents the frame index of the last frame,
+            # instead of the total number of frames contained in the video clip.
+            self.count += 1
+            if self.cap:
+                self.cap.release()
+            if self.count < self.nf:
+                self._new_video(self.files[self.count])
+            # Clear self.frame_buffer
+            self.frame_buffer = []
+            return path, None, None
+        return path, multi_frame_img, info
+
+    def __next__(self):
+        """
+        Returns the next batch of multi-frame series from the video with their paths and metadata.
+        """
+        self.mode = 'video'
+
+        paths, imgs, info = [], [], []
+        while len(imgs) < self.bs:
+            if self.count >= self.nf:
+                if imgs:
+                    return paths, imgs, info
+                else:
+                    raise StopIteration
+
+            path = self.files[self.count]
+            if not self.cap or not self.cap.isOpened():
+                self._new_video(path)
+
+            path_, img_, info_ = self._retrieve_multiframe_images(path)
+            if img_ is not None:
+                paths.append(path_)
+                imgs.append(img_)
+                info.append(info_)
+        return paths, imgs, info
+
+    def _new_video(self, path):
+        """
+        In the multi-frame model, create a new video capture object for the given path.
+        Calculate the correct number of multi-frame series.
+        """
+        super()._new_video(path)
+        self.frames = self.frames - self.n_frames + 1
+
+
+class MultiFrameResults:
+    """
+    A class for storing inference results of Multi-Frame model.
+    """
+
+    def __init__(self, results: list):
+        self.results = results
+        self.speed = {"preprocess": None, "inference": None, "postprocess": None}
+        self.save_dir = None
+
+    def __getitem__(self, idx):
+        return self.results[idx]
+
+    def plot(
+        self,
+        conf=True,
+        line_width=None,
+        im_gpu=None,
+        labels=True,
+        boxes=True,
+    ):
+        """
+        Plots results for Multi-Frame model. Results are plotted on each individual frame of the multi-frame series.
+        """
+        plotted_images = [
+            result.plot(
+                line_width=line_width,
+                boxes=boxes,
+                conf=conf,
+                labels=labels,
+                im_gpu=im_gpu,
+            )
+            for result in self.results
+        ]
+        return plotted_images
+
+    def verbose(self):
+        super().verbose()
