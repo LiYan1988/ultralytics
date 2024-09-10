@@ -4,6 +4,7 @@ from ultralytics.models.yolo.pose.predict import PosePredictor
 
 from .train import MultiFrameTrainer
 from .val import MultiFrameValidator
+from .predict import MultiFramePredictor
 
 
 class MultiFrame(Model):
@@ -19,6 +20,6 @@ class MultiFrame(Model):
                 "model": PoseModel,
                 "trainer": MultiFrameTrainer,
                 "validator": MultiFrameValidator,
-                "predictor": PosePredictor,
+                "predictor": MultiFramePredictor,
             }
         }
