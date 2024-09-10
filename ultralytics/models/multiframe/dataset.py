@@ -50,7 +50,7 @@ from ultralytics.data.utils import IMG_FORMATS
 from ultralytics.data.loaders import LoadImagesAndVideos, SourceTypes
 from ultralytics.engine.results import Results
 
-from .augment import MultiFrameLetterBox, multiframe_v8_transforms
+from .augment import MultiFrameLetterBox, multiframe_v8_transforms, MultiFrameFormat
 
 
 class MultiFrameDataset(YOLODataset):
@@ -375,7 +375,7 @@ class MultiFrameDataset(YOLODataset):
         else:
             transforms = Compose([MultiFrameLetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
         transforms.append(
-            Format(
+            MultiFrameFormat(
                 bbox_format="xywh",
                 normalize=True,
                 return_mask=self.use_segments,

@@ -250,6 +250,32 @@ class MultiFrameRandomFlip(RandomFlip):
         return update_imgs_from_img(data, data_)
 
 
+class MultiFrameFormat(Format):
+    """
+    Overrides ultralytics.data.augment.Format for the multiframe task.
+
+    Ensure correct frame and channel orders:
+    - Frames are from old to new, first the oldest, last the newest.
+    - Channel order of each frame is RGB. Convert BGR to RGB for each individual frame and then concatenate frames.
+    """
+
+    def __call__(self, data):
+        """
+        Ensure output is in the correct channel order.
+
+        The desired output channel order is R1G1B1R2G2B2...RnGnBn, where n is the number of frames.
+        The corresponding desired input channel should be BnGnRn...B1G1R1
+        The actual input channel order is B1G1R1B2G2R2...BnGnRn.
+        So we just need to first reverse the frame order to get the desired channel order.
+        Then we can call the original Format transform.
+        """
+        n_frames = data['img'].shape[-1] // 3
+        imgs = [data['img'][..., i * 3 : (i + 1) * 3] for i in reversed(range(n_frames))]
+        data['img'] = np.concatenate(imgs, axis=-1)
+        data = super().__call__(data)
+        return data
+
+
 def update_imgs_from_img(data_orig, data_aug):
     """
     Updates individual frame from concatenated multi-frame image.
