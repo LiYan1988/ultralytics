@@ -319,22 +319,24 @@ class MultiFrameDataset(YOLODataset):
             msg = f"{prefix}WARNING ⚠️ {lb_file}: ignoring corrupt image/label: {e}"
             return [None, None, None, None, nm, nf, ne, nc, msg]
 
-    def load_single_image(self, i, j, rect_mode=True):
+    def load_single_image(self, k, rect_mode=True):
         """
         Load image in img_file. If rect_mode is True resize to maintain aspect ratio,
         otherwise stretch image to square imgsz.
 
-        Args:
-            i: i-th multiframe series, i = 0, 1, ..., N - n, where n is the number of frames per series
-            j: the j-th frame in the multiframe series, j = 0, 1, ..., n - 1.
+        Load the k-th image.
+        - if k < n - 1, it is the k-th image of the first series,
+        - if k >= n - 1, it is the last image of the (k-n+1)-th series,
+        where n is the number of series in multiframe.
 
         Returns (im, original hw, resized hw).
         """
         # Calculate index of the j-th image in i-th series. The indexing is aligned with
         # that in ultralytics.models.multiframe.dataset.MultiFrameDataset.verify_label
-        k = i - self.n_frames + 1 + j
-        label = self.labels[i]
-        img_file = label['im_files'][j]
+        if k < self.n_frames - 1:
+            img_file = self.labels[0]['im_files'][k]
+        else:
+            img_file = self.labels[k - self.n_frames + 1]['im_files'][-1]
 
         # Check cache, same as the first part in ultralytics.data.base.BaseDataset.load_image
         im, f, fn = self.ims[k], self.im_files[k], self.npy_files[k]
@@ -387,13 +389,17 @@ class MultiFrameDataset(YOLODataset):
 
     def load_image(self, i, rect_mode=True):
         """
-        Load image according to labels' im_files field.
+        Loads image according to labels' im_files field.
+
+        Loads the i-th multiframe series, where i = 0, 1, ..., N-n.
+        The returned imgs is not an image, but a list of images.
         """
         label = self.labels[i]
         img_files = label['im_files']
         imgs, ori_shape, resized_shape = [None] * self.n_frames, [None] * self.n_frames, [None] * self.n_frames
         for j, f in enumerate(img_files):
-            imgs[j], ori_shape[j], resized_shape[j] = self.load_single_image(f, self.imgsz, rect_mode)
+            # the j-th image of the i-th series
+            imgs[j], ori_shape[j], resized_shape[j] = self.load_single_image()
         return imgs, ori_shape[0], resized_shape[0]
 
     def get_image_and_label(self, index):
