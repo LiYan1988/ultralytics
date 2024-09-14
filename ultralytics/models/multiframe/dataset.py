@@ -398,12 +398,17 @@ class MultiFrameDataset(YOLODataset):
         img_files = label['im_files']
         imgs, ori_shape, resized_shape = [None] * self.n_frames, [None] * self.n_frames, [None] * self.n_frames
         for j, f in enumerate(img_files):
-            # the j-th image of the i-th series
-            imgs[j], ori_shape[j], resized_shape[j] = self.load_single_image()
+            # The j-th image of the i-th series
+            imgs[j], ori_shape[j], resized_shape[j] = self.load_single_image(i - self.n_frames + j + 1)
         return imgs, ori_shape[0], resized_shape[0]
 
     def get_image_and_label(self, index):
-        """Get and return label information from the dataset."""
+        """
+        Get and return label information from the dataset.
+
+        Args:
+            index: the index of multiframe series, 0, 1, ..., N-n.
+        """
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop("shape", None)  # shape is for rect, remove it
         # label["img"] contains each individual frame, and label["imgs"] contain the concatenated multiple frames
