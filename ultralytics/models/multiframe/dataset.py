@@ -20,7 +20,7 @@ from PIL import Image, ImageOps
 from torch.utils.data import ConcatDataset
 import pandas as pd
 
-from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, FORMATS_HELP_MSG
+from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr
 from ultralytics.utils.ops import resample_segments
 from ultralytics.utils.torch_utils import TORCHVISION_0_18
 from ultralytics.data.dataset import DATASET_CACHE_VERSION
@@ -43,7 +43,9 @@ from ultralytics.data.utils import (
     load_dataset_cache_file,
     save_dataset_cache_file,
     verify_image,
-    verify_image_label, exif_size,
+    verify_image_label,
+    exif_size,
+    FORMATS_HELP_MSG,
 )
 from ultralytics.data.dataset import YOLODataset
 from ultralytics.data.utils import IMG_FORMATS
