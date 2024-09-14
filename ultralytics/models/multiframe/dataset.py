@@ -16,11 +16,11 @@ import copy
 import cv2
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 from torch.utils.data import ConcatDataset
 import pandas as pd
 
-from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr
+from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, FORMATS_HELP_MSG
 from ultralytics.utils.ops import resample_segments
 from ultralytics.utils.torch_utils import TORCHVISION_0_18
 from ultralytics.data.dataset import DATASET_CACHE_VERSION
@@ -317,23 +317,71 @@ class MultiFrameDataset(YOLODataset):
             msg = f"{prefix}WARNING ⚠️ {lb_file}: ignoring corrupt image/label: {e}"
             return [None, None, None, None, nm, nf, ne, nc, msg]
 
-    @staticmethod
-    def load_single_image(img_file, imgsz, rect_mode=True):
+    def load_single_image(self, i, j, rect_mode=True):
         """
         Load image in img_file. If rect_mode is True resize to maintain aspect ratio,
         otherwise stretch image to square imgsz.
+
+        Args:
+            i: i-th multiframe series, i = 0, 1, ..., N - n, where n is the number of frames per series
+            j: the j-th frame in the multiframe series, j = 0, 1, ..., n - 1.
+
         Returns (im, original hw, resized hw).
         """
-        im = cv2.imread(str(img_file))
-        h0, w0 = im.shape[:2] # original hw
-        if rect_mode:
-            r = imgsz / max(h0, w0)  # ratio
-            if r != 1:  # if sizes are not equal
-                w, h = (min(math.ceil(w0 * r), imgsz), min(math.ceil(h0 * r), imgsz))
-                im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
-        elif not (h0 == w0 == imgsz):  # resize by stretching image to square imgsz
-            im = cv2.resize(im, (imgsz, imgsz), interpolation=cv2.INTER_LINEAR)
-        return im, (h0, w0), im.shape[:2]
+        # Calculate index of the j-th image in i-th series. The indexing is aligned with
+        # that in ultralytics.models.multiframe.dataset.MultiFrameDataset.verify_label
+        k = i - self.n_frames + 1 + j
+        label = self.labels[i]
+        img_file = label['im_files'][j]
+
+        # Check cache, same as the first part in ultralytics.data.base.BaseDataset.load_image
+        im, f, fn = self.ims[k], self.im_files[k], self.npy_files[k]
+        if im is None:  # not cached in RAM
+            if fn.exists():  # load npy
+                try:
+                    im = np.load(fn)
+                except Exception as e:
+                    LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
+                    Path(fn).unlink(missing_ok=True)
+                    im = cv2.imread(f)  # BGR
+            else:  # read image
+                im = cv2.imread(f)  # BGR
+            if im is None:
+                raise FileNotFoundError(f"Image Not Found {f}")
+
+            im = cv2.imread(str(img_file))
+            h0, w0 = im.shape[:2] # original hw
+            if rect_mode:
+                r = self.imgsz / max(h0, w0)  # ratio
+                if r != 1:  # if sizes are not equal
+                    w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
+                    im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+            elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
+                im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
+
+            # Don't understand this part:
+            # /opt/miniconda3/envs/table-tennis-analytics/lib/python3.12/site-packages/ultralytics/data/base.py:174
+            self.ims[k], self.im_hw0[k], self.im_hw[k] = im, (h0, w0), im.shape[:2]
+
+            return im, (h0, w0), im.shape[:2]
+
+        return self.ims[k], self.im_hw0[k], self.im_hw[k]
+
+    def cache_images(self):
+        """Cache images to memory or disk."""
+        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
+        fcn, storage = (self.cache_images_to_disk, "Disk") if self.cache == "disk" else (self.load_single_image, "RAM")
+        with ThreadPool(NUM_THREADS) as pool:
+            results = pool.imap(fcn, range(self.ni))
+            pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
+            for i, x in pbar:
+                if self.cache == "disk":
+                    b += self.npy_files[i].stat().st_size
+                else:  # 'ram'
+                    self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
+                    b += self.ims[i].nbytes
+                pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB {storage})"
+            pbar.close()
 
     def load_image(self, i, rect_mode=True):
         """
