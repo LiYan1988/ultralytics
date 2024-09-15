@@ -139,11 +139,7 @@ class MultiFrameDataset(YOLODataset):
         #   The original implementation indexes self.im_files like self.im_files[i] to get the path to the i-th image.
         #   This is not applicable in multiframe task. Because indexing from dataloader is referring to
         #   multiframe series instead of images.
-        self.im_files = sorted(set([_ for l in self.labels for _ in l['im_files']]))
-
-        # - self.ni equals to the number of labels.
-        #     But in multiframe task the number of labels does not equal to the number of images.
-        self.ni = len(self.im_files)
+        self.im_files = sorted(set([_ for l in labels for _ in l['im_files']]))
 
         return labels
 
@@ -362,7 +358,6 @@ class MultiFrameDataset(YOLODataset):
             if im is None:
                 raise FileNotFoundError(f"Image Not Found {im_file}")
 
-            im = cv2.imread(str(im_file))
             h0, w0 = im.shape[:2] # original hw
             if rect_mode:
                 r = self.imgsz / max(h0, w0)  # ratio
@@ -394,12 +389,15 @@ class MultiFrameDataset(YOLODataset):
         self.im_hw0 = {f: None for f in self.im_files}
         self.im_hw = {f: None for f in self.im_files}
         self.npy_files = {f: Path(f).with_suffix(".npy") for f in self.im_files}
+        # - self.ni equals to the number of labels.
+        #     But in multiframe task the number of labels does not equal to the number of images.
+        self.ni = len(self.im_files)
 
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         fcn, storage = (self.cache_images_to_disk, "Disk") if self.cache == "disk" else (self.load_single_image, "RAM")
         with ThreadPool(NUM_THREADS) as pool:
             results = pool.imap(fcn, self.im_files)
-            pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
+            pbar = TQDM(zip(self.im_files, results), total=self.ni, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if self.cache == "disk":
                     b += self.npy_files[i].stat().st_size
