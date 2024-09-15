@@ -106,7 +106,7 @@ class MultiFrameDataset(YOLODataset):
         if not labels:
             LOGGER.warning(f"WARNING ⚠️ No images found in {cache_path}, training may not work correctly. {HELP_URL}")
         # Note: self.im_files is not a list of frames, but a list of frame lists
-        self.im_files = [lb["im_file"] for lb in labels]  # update im_files
+        # self.im_files = [lb["im_file"] for lb in labels]  # update im_files
 
         # Check if the dataset is all boxes or all segments
         lengths = ((len(lb["cls"]), len(lb["bboxes"]), len(lb["segments"])) for lb in labels)
@@ -129,6 +129,22 @@ class MultiFrameDataset(YOLODataset):
                 # This is for quick check in development
                 # train and val may have problem when batch size equals 1, so at least 2 samples.
                 labels = labels[:2]
+
+        # Update self.ni and self.im_files.
+        # In the original YOLO implementation:
+        # - self.im_files equals to all images in the image directory, as implemented
+        #     in ultralytics.data.base.BaseDataset.get_img_files.
+        #     But we may not use all of them, for example if fraction < 1.
+        # NOTE: The order of elements (image paths) in self.im_files is not aligned with those in video or self.labels.
+        #   The original implementation indexes self.im_files like self.im_files[i] to get the path to the i-th image.
+        #   This is not applicable in multiframe task. Because indexing from dataloader is referring to
+        #   multiframe series instead of images.
+        self.im_files = sorted(set([_ for l in self.labels for _ in l['im_files']]))
+
+        # - self.ni equals to the number of labels.
+        #     But in multiframe task the number of labels does not equal to the number of images.
+        self.ni = len(self.im_files)
+
         return labels
 
     def cache_labels(self, path=Path("./labels.cache")):
@@ -319,27 +335,20 @@ class MultiFrameDataset(YOLODataset):
             msg = f"{prefix}WARNING ⚠️ {lb_file}: ignoring corrupt image/label: {e}"
             return [None, None, None, None, nm, nf, ne, nc, msg]
 
-    def load_single_image(self, k, rect_mode=True):
+    def load_single_image(self, im_file, rect_mode=True):
         """
         Load image in img_file. If rect_mode is True resize to maintain aspect ratio,
         otherwise stretch image to square imgsz.
 
-        Load the k-th image.
-        - if k < n - 1, it is the k-th image of the first series,
-        - if k >= n - 1, it is the last image of the (k-n+1)-th series,
-        where n is the number of series in multiframe.
+        The original implementation in ultralytics.data.base.BaseDataset.load_image
+        loads image by its index in self.im_files. This is not the case in multiframe task.
+        Correspondingly, self.ims, self.npy_files, self.im_hw0, self.im_hw should be dict with im_file as key.
 
         Returns (im, original hw, resized hw).
         """
-        # Calculate index of the j-th image in i-th series. The indexing is aligned with
-        # that in ultralytics.models.multiframe.dataset.MultiFrameDataset.verify_label
-        if k < self.n_frames - 1:
-            img_file = self.labels[0]['im_files'][k]
-        else:
-            img_file = self.labels[k - self.n_frames + 1]['im_files'][-1]
-
-        # Check cache, same as the first part in ultralytics.data.base.BaseDataset.load_image
-        im, f, fn = self.ims[k], self.im_files[k], self.npy_files[k]
+        # Check cache, similar as the first part in ultralytics.data.base.BaseDataset.load_image.
+        # With im_file as key to self.ims and self.npy_files
+        im, fn = self.ims[im_file], self.npy_files[im_file]
         if im is None:  # not cached in RAM
             if fn.exists():  # load npy
                 try:
@@ -347,13 +356,13 @@ class MultiFrameDataset(YOLODataset):
                 except Exception as e:
                     LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
                     Path(fn).unlink(missing_ok=True)
-                    im = cv2.imread(f)  # BGR
+                    im = cv2.imread(im_file)  # BGR
             else:  # read image
-                im = cv2.imread(f)  # BGR
+                im = cv2.imread(im_file)  # BGR
             if im is None:
-                raise FileNotFoundError(f"Image Not Found {f}")
+                raise FileNotFoundError(f"Image Not Found {im_file}")
 
-            im = cv2.imread(str(img_file))
+            im = cv2.imread(str(im_file))
             h0, w0 = im.shape[:2] # original hw
             if rect_mode:
                 r = self.imgsz / max(h0, w0)  # ratio
@@ -365,18 +374,31 @@ class MultiFrameDataset(YOLODataset):
 
             # Don't understand this part:
             # /opt/miniconda3/envs/table-tennis-analytics/lib/python3.12/site-packages/ultralytics/data/base.py:174
-            self.ims[k], self.im_hw0[k], self.im_hw[k] = im, (h0, w0), im.shape[:2]
+            self.ims[im_file], self.im_hw0[im_file], self.im_hw[im_file] = im, (h0, w0), im.shape[:2]
 
             return im, (h0, w0), im.shape[:2]
 
-        return self.ims[k], self.im_hw0[k], self.im_hw[k]
+        return self.ims[im_file], self.im_hw0[im_file], self.im_hw[im_file]
 
     def cache_images(self):
-        """Cache images to memory or disk."""
+        """
+        Cache images to memory or disk.
+
+        Overrides the following properties in ultralytics.data.base.BaseDataset:
+        - self.ims,
+        - self.im_hw0,
+        - self.im_hw,
+        - self.npy_files,
+        """
+        self.ims = {f: None for f in self.im_files}
+        self.im_hw0 = {f: None for f in self.im_files}
+        self.im_hw = {f: None for f in self.im_files}
+        self.npy_files = {f: Path(f).with_suffix(".npy") for f in self.im_files}
+
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         fcn, storage = (self.cache_images_to_disk, "Disk") if self.cache == "disk" else (self.load_single_image, "RAM")
         with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(fcn, range(self.ni))
+            results = pool.imap(fcn, self.im_files)
             pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
             for i, x in pbar:
                 if self.cache == "disk":
@@ -386,6 +408,12 @@ class MultiFrameDataset(YOLODataset):
                     b += self.ims[i].nbytes
                 pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB {storage})"
             pbar.close()
+
+    def cache_images_to_disk(self, im_file):
+        """Saves an image as an *.npy file for faster loading."""
+        f = self.npy_files[im_file] # f is a pathlib.Path object
+        if not f.exists():
+            np.save(f.as_posix(), cv2.imread(im_file), allow_pickle=False)
 
     def load_image(self, i, rect_mode=True):
         """
@@ -398,8 +426,8 @@ class MultiFrameDataset(YOLODataset):
         img_files = label['im_files']
         imgs, ori_shape, resized_shape = [None] * self.n_frames, [None] * self.n_frames, [None] * self.n_frames
         for j, f in enumerate(img_files):
-            # The j-th image of the i-th series
-            imgs[j], ori_shape[j], resized_shape[j] = self.load_single_image(i - self.n_frames + j + 1)
+            # The j-th image of the i-th series, with j = 0, 1, ..., n -1 (n=self.n_frames), and i = 0, 1, ..., N-n.
+            imgs[j], ori_shape[j], resized_shape[j] = self.load_single_image(f)
         return imgs, ori_shape[0], resized_shape[0]
 
     def get_image_and_label(self, index):
