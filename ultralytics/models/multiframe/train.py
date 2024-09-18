@@ -1,7 +1,5 @@
 from copy import deepcopy, copy
 
-from overrides import overrides
-
 from ultralytics.models.yolo.pose import PoseTrainer
 from ultralytics.utils import DEFAULT_CFG, LOGGER, colorstr
 from ultralytics.utils.torch_utils import de_parallel

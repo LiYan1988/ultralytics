@@ -20,7 +20,7 @@ from PIL import Image, ImageOps
 from torch.utils.data import ConcatDataset
 import pandas as pd
 
-from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr
+from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, plotting
 from ultralytics.utils.ops import resample_segments
 from ultralytics.utils.torch_utils import TORCHVISION_0_18
 from ultralytics.data.dataset import DATASET_CACHE_VERSION
@@ -53,6 +53,7 @@ from ultralytics.data.loaders import LoadImagesAndVideos, SourceTypes
 from ultralytics.engine.results import Results
 
 from .augment import MultiFrameLetterBox, multiframe_v8_transforms, MultiFrameFormat
+from .utils import MultiFrameAnnotator
 
 
 class MultiFrameDataset(YOLODataset):
@@ -602,15 +603,19 @@ class MultiFrameVideoLoader(LoadImagesAndVideos):
         self.frames = self.frames - self.n_frames + 1
 
 
+colors = plotting.Colors() # create instance for 'from utils.plots import colors'
+
+
 class MultiFrameResults:
     """
     A class for storing inference results of Multi-Frame model.
     """
 
-    def __init__(self, results: list):
+    def __init__(self, results: list, n_frames: int):
         self.results = results
         self.speed = {"preprocess": None, "inference": None, "postprocess": None}
         self.save_dir = None
+        self.n_frames = n_frames if n_frames else len(results)
 
     def __getitem__(self, idx):
         return self.results[idx]
@@ -638,5 +643,147 @@ class MultiFrameResults:
         ]
         return plotted_images
 
-    def verbose(self):
-        super().verbose()
+    # def verbose(self):
+    #     super().verbose()
+
+    def plot_single_frame(
+        self,
+        conf=True,
+        line_width=None,
+        font_size=None,
+        font="Arial.ttf",
+        pil=False,
+        img=None,
+        im_gpu=None,
+        kpt_radius=5,
+        kpt_line=True,
+        labels=True,
+        boxes=True,
+        masks=True,
+        probs=True,
+        show=False,
+        save=False,
+        filename=None,
+        color_mode="class",
+    ):
+        """
+        For multiframe task, plots detection results on a single input RGB frame.
+
+        Changes: replaces `Annotator` with `MultiFrameAnnotator` for plotting ball traces (non-human skeleton).
+
+        Args:
+            conf (bool): Whether to plot detection confidence scores.
+            line_width (float | None): Line width of bounding boxes. If None, scaled to image size.
+            font_size (float | None): Font size for text. If None, scaled to image size.
+            font (str): Font to use for text.
+            pil (bool): Whether to return the image as a PIL Image.
+            img (np.ndarray | None): Image to plot on. If None, uses original image.
+            im_gpu (torch.Tensor | None): Normalized image on GPU for faster mask plotting.
+            kpt_radius (int): Radius of drawn keypoints.
+            kpt_line (bool): Whether to draw lines connecting keypoints.
+            labels (bool): Whether to plot labels of bounding boxes.
+            boxes (bool): Whether to plot bounding boxes.
+            masks (bool): Whether to plot masks.
+            probs (bool): Whether to plot classification probabilities.
+            show (bool): Whether to display the annotated image.
+            save (bool): Whether to save the annotated image.
+            filename (str | None): Filename to save image if save is True.
+            color_mode (bool): Specify the color mode, e.g., 'instance' or 'class'. Default to 'class'.
+
+        Returns:
+            (np.ndarray): Annotated image as a numpy array.
+
+        Examples:
+            >>> results = model("image.jpg")
+            >>> for result in results:
+            ...     im = result.plot()
+            ...     im.show()
+        """
+        assert color_mode in {"instance", "class"}, f"Expected color_mode='instance' or 'class', not {color_mode}."
+        if img is None and isinstance(self.orig_img, torch.Tensor):
+            img = (self.orig_img[0].detach().permute(1, 2, 0).contiguous() * 255).to(torch.uint8).cpu().numpy()
+
+        names = self.names
+        is_obb = self.obb is not None
+        pred_boxes, show_boxes = self.obb if is_obb else self.boxes, boxes
+        pred_masks, show_masks = self.masks, masks
+        pred_probs, show_probs = self.probs, probs
+        annotator = MultiFrameAnnotator(
+            deepcopy(self.orig_img if img is None else img),
+            line_width,
+            font_size,
+            font,
+            pil or (pred_probs is not None and show_probs),  # Classify tasks default to pil=True
+            example=names,
+        )
+
+        # Plot Segment results
+        if pred_masks and show_masks:
+            if im_gpu is None:
+                img = LetterBox(pred_masks.shape[1:])(image=annotator.result())
+                im_gpu = (
+                    torch.as_tensor(img, dtype=torch.float16, device=pred_masks.data.device)
+                    .permute(2, 0, 1)
+                    .flip(0)
+                    .contiguous()
+                    / 255
+                )
+            idx = (
+                pred_boxes.id
+                if pred_boxes.id is not None and color_mode == "instance"
+                else pred_boxes.cls
+                if pred_boxes and color_mode == "class"
+                else reversed(range(len(pred_masks)))
+            )
+            annotator.masks(pred_masks.data, colors=[colors(x, True) for x in idx], im_gpu=im_gpu)
+
+        # Plot Detect results
+        if pred_boxes is not None and show_boxes:
+            for i, d in enumerate(reversed(pred_boxes)):
+                c, conf, id = int(d.cls), float(d.conf) if conf else None, None if d.id is None else int(d.id.item())
+                name = ("" if id is None else f"id:{id} ") + names[c]
+                label = (f"{name} {conf:.2f}" if conf else name) if labels else None
+                box = d.xyxyxyxy.reshape(-1, 4, 2).squeeze() if is_obb else d.xyxy.squeeze()
+                annotator.box_label(
+                    box,
+                    label,
+                    color=colors(
+                        c
+                        if color_mode == "class"
+                        else id
+                        if id is not None
+                        else i
+                        if color_mode == "instance"
+                        else None,
+                        True,
+                    ),
+                    rotated=is_obb,
+                )
+
+        # Plot Classify results
+        if pred_probs is not None and show_probs:
+            text = ",\n".join(f"{names[j] if names else j} {pred_probs.data[j]:.2f}" for j in pred_probs.top5)
+            x = round(self.orig_shape[0] * 0.03)
+            annotator.text([x, x], text, txt_color=(255, 255, 255))  # TODO: allow setting colors
+
+        # Plot Pose results
+        if self.keypoints is not None:
+            for i, k in enumerate(reversed(self.keypoints.data)):
+                annotator.kpts(
+                    k,
+                    self.orig_shape,
+                    radius=kpt_radius,
+                    kpt_line=kpt_line,
+                    kpt_color=colors(i, True) if color_mode == "instance" else None,
+                )
+
+        # Show results
+        if show:
+            annotator.show(self.path)
+
+        # Save results
+        if save:
+            annotator.save(filename)
+
+        return annotator.result()
+
