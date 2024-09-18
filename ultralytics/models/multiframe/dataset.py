@@ -632,7 +632,8 @@ class MultiFrameResults:
         Plots results for Multi-Frame model. Results are plotted on each individual frame of the multi-frame series.
         """
         plotted_images = [
-            result.plot(
+            self.plot_single_frame(
+                result=result,
                 line_width=line_width,
                 boxes=boxes,
                 conf=conf,
@@ -648,6 +649,7 @@ class MultiFrameResults:
 
     def plot_single_frame(
         self,
+        result: Results,
         conf=True,
         line_width=None,
         font_size=None,
@@ -700,20 +702,21 @@ class MultiFrameResults:
             ...     im.show()
         """
         assert color_mode in {"instance", "class"}, f"Expected color_mode='instance' or 'class', not {color_mode}."
-        if img is None and isinstance(self.orig_img, torch.Tensor):
-            img = (self.orig_img[0].detach().permute(1, 2, 0).contiguous() * 255).to(torch.uint8).cpu().numpy()
+        if img is None and isinstance(result.orig_img, torch.Tensor):
+            img = (result.orig_img[0].detach().permute(1, 2, 0).contiguous() * 255).to(torch.uint8).cpu().numpy()
 
-        names = self.names
-        is_obb = self.obb is not None
-        pred_boxes, show_boxes = self.obb if is_obb else self.boxes, boxes
-        pred_masks, show_masks = self.masks, masks
-        pred_probs, show_probs = self.probs, probs
+        names = result.names
+        is_obb = result.obb is not None
+        pred_boxes, show_boxes = result.obb if is_obb else result.boxes, boxes
+        pred_masks, show_masks = result.masks, masks
+        pred_probs, show_probs = result.probs, probs
         annotator = MultiFrameAnnotator(
-            deepcopy(self.orig_img if img is None else img),
-            line_width,
-            font_size,
-            font,
-            pil or (pred_probs is not None and show_probs),  # Classify tasks default to pil=True
+            im=deepcopy(result.orig_img if img is None else img),
+            n_frames=self.n_frames,
+            line_width=line_width,
+            font_size=font_size,
+            font=font,
+            pil=pil or (pred_probs is not None and show_probs),  # Classify tasks default to pil=True
             example=names,
         )
 
@@ -763,15 +766,15 @@ class MultiFrameResults:
         # Plot Classify results
         if pred_probs is not None and show_probs:
             text = ",\n".join(f"{names[j] if names else j} {pred_probs.data[j]:.2f}" for j in pred_probs.top5)
-            x = round(self.orig_shape[0] * 0.03)
+            x = round(result.orig_shape[0] * 0.03)
             annotator.text([x, x], text, txt_color=(255, 255, 255))  # TODO: allow setting colors
 
         # Plot Pose results
-        if self.keypoints is not None:
-            for i, k in enumerate(reversed(self.keypoints.data)):
+        if result.keypoints is not None:
+            for i, k in enumerate(reversed(result.keypoints.data)):
                 annotator.kpts(
                     k,
-                    self.orig_shape,
+                    result.orig_shape,
                     radius=kpt_radius,
                     kpt_line=kpt_line,
                     kpt_color=colors(i, True) if color_mode == "instance" else None,
@@ -779,7 +782,7 @@ class MultiFrameResults:
 
         # Show results
         if show:
-            annotator.show(self.path)
+            annotator.show(result.path)
 
         # Save results
         if save:

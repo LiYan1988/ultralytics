@@ -75,8 +75,8 @@ class MultiFrameAnnotator(Annotator):
             # Convert to numpy first
             self.im = np.asarray(self.im).copy()
         nkpt, ndim = kpts.shape
-        # is_pose = nkpt == 17 and ndim in {2, 3}
-        # kpt_line &= is_pose  # `kpt_line=True` for now only supports human pose plotting
+        is_pose = nkpt == self.n_frames and ndim in {2, 3} # check if we have a valid pose detection
+        kpt_line &= is_pose  # `kpt_line=True` for ball trajectory plotting
         for i, k in enumerate(kpts):
             color_k = colors(i)
             x_coord, y_coord = k[0], k[1]
@@ -107,7 +107,7 @@ class MultiFrameAnnotator(Annotator):
                     pos1,
                     pos2,
                     kpt_color or self.limb_color[i].tolist(),
-                    thickness=2,
+                    thickness=min(self.lw // 2, 4),
                     lineType=cv2.LINE_AA,
                 )
         if self.pil:
