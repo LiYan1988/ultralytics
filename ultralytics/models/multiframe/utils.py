@@ -45,6 +45,26 @@ class MultiFrameAnnotator(Annotator):
     Annotator for multi-frame data samples.
     """
 
+    def __init__(
+        self,
+        im,
+        n_frames,
+        line_width=None,
+        font_size=None,
+        font="Arial.ttf",
+        pil=False,
+        example="abc",
+    ):
+        super().__init__(
+            im,
+            line_width=line_width,
+            font_size=font_size,
+            font=font,
+            pil=pil,
+            example=example
+        )
+        self.n_frames = n_frames
+
     def kpts(self, kpts, shape=(640, 640), radius=5, kpt_line=True, conf_thres=0.25, kpt_color=None):
         """
         Plot keypoints on the image.
@@ -55,10 +75,10 @@ class MultiFrameAnnotator(Annotator):
             # Convert to numpy first
             self.im = np.asarray(self.im).copy()
         nkpt, ndim = kpts.shape
-        is_pose = nkpt == 17 and ndim in {2, 3}
-        kpt_line &= is_pose  # `kpt_line=True` for now only supports human pose plotting
+        # is_pose = nkpt == 17 and ndim in {2, 3}
+        # kpt_line &= is_pose  # `kpt_line=True` for now only supports human pose plotting
         for i, k in enumerate(kpts):
-            color_k = kpt_color or (self.kpt_color[i].tolist() if is_pose else colors(i))
+            color_k = colors(i)
             x_coord, y_coord = k[0], k[1]
             if x_coord % shape[1] != 0 and y_coord % shape[0] != 0:
                 if len(k) == 3:
@@ -70,12 +90,12 @@ class MultiFrameAnnotator(Annotator):
 
         if kpt_line:
             ndim = kpts.shape[-1]
-            for i, sk in enumerate(self.skeleton):
-                pos1 = (int(kpts[(sk[0] - 1), 0]), int(kpts[(sk[0] - 1), 1]))
-                pos2 = (int(kpts[(sk[1] - 1), 0]), int(kpts[(sk[1] - 1), 1]))
+            for i in range(self.n_frames - 1):
+                pos1 = (int(kpts[i, 0]), int(kpts[i, 1]))
+                pos2 = (int(kpts[i + 1, 0]), int(kpts[i + 1, 1]))
                 if ndim == 3:
-                    conf1 = kpts[(sk[0] - 1), 2]
-                    conf2 = kpts[(sk[1] - 1), 2]
+                    conf1 = kpts[i, 2]
+                    conf2 = kpts[i + 1, 2]
                     if conf1 < conf_thres or conf2 < conf_thres:
                         continue
                 if pos1[0] % shape[1] == 0 or pos1[1] % shape[0] == 0 or pos1[0] < 0 or pos1[1] < 0:
