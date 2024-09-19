@@ -29,6 +29,7 @@ def plot_samples_multiframe(batch, ni, save_dir, on_plot):
     for i in range(n_frames):
         plot_images_multiframe(
             images[:, i * 3:i * 3 + 3, ...],
+            n_frames,
             batch_idx,
             cls,
             bboxes,
@@ -118,6 +119,7 @@ class MultiFrameAnnotator(Annotator):
 @threaded
 def plot_images_multiframe(
     images: Union[torch.Tensor, np.ndarray],
+    n_frames: int,
     batch_idx: Union[torch.Tensor, np.ndarray],
     cls: Union[torch.Tensor, np.ndarray],
     bboxes: Union[torch.Tensor, np.ndarray] = np.zeros(0, dtype=np.float32),
@@ -173,7 +175,7 @@ def plot_images_multiframe(
 
     # Annotate
     fs = int((h + w) * ns * 0.01)  # font size
-    annotator = MultiFrameAnnotator(mosaic, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
+    annotator = MultiFrameAnnotator(mosaic, n_frames, line_width=round(fs / 10), font_size=fs, pil=True, example=names)
     for i in range(bs):
         x, y = int(w * (i // ns)), int(h * (i % ns))  # block origin
         annotator.rectangle([x, y, x + w, y + h], None, (255, 255, 255), width=2)  # borders
