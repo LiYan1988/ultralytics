@@ -23,6 +23,7 @@ class MultiFrameValidator(PoseValidator):
         for i in range(n_frames):
             plot_images_multiframe(
                 batch["img"][:, i * 3:i * 3 + 3, ...],
+                n_frames,
                 *output_to_target(preds, max_det=self.args.max_det),
                 kpts=pred_kpts,
                 paths=batch["im_file"],
