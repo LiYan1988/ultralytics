@@ -620,6 +620,15 @@ class MultiFrameResults:
     def __getitem__(self, idx):
         return self.results[idx]
 
+    def to_json(self, normalize=False, decimals=5):
+        """
+        Converts MF results to JSON format.
+        """
+        import json
+
+        sumary = [r.summary(normalize, decimals) for r in self.results]
+        return json.dumps(sumary, indent=2)
+
     def plot(
         self,
         conf=True,
